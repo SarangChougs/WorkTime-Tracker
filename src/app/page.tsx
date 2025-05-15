@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect } from 'react';
@@ -21,14 +22,17 @@ const initialCategories: Category[] = [
 export default function HomePage() {
   const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
   const [categories, setCategories] = useState<Category[]>(initialCategories);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(initialCategories.length > 0 ? initialCategories[0].id : null);
   
   const [timerStartTime, setTimerStartTime] = useState<number | null>(null);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [pauseStartTime, setPauseStartTime] = useState<number | null>(null);
+  const [totalPausedDuration, setTotalPausedDuration] = useState(0);
+  const [currentElapsedTime, setCurrentElapsedTime] = useState(0);
 
   const { toast } = useToast();
 
-  // Effect to load data from localStorage if available (optional persistence)
   useEffect(() => {
     const storedLogs = localStorage.getItem('timeWiseLogs');
     const storedCategories = localStorage.getItem('timeWiseCategories');
@@ -36,13 +40,19 @@ export default function HomePage() {
       setTimeLogs(JSON.parse(storedLogs));
     }
     if (storedCategories) {
-      setCategories(JSON.parse(storedCategories));
+      const parsedCategories = JSON.parse(storedCategories);
+      setCategories(parsedCategories);
+      if (parsedCategories.length > 0 && !selectedCategoryId) {
+        setSelectedCategoryId(parsedCategories[0].id);
+      }
     } else {
       localStorage.setItem('timeWiseCategories', JSON.stringify(initialCategories));
+       if (initialCategories.length > 0 && !selectedCategoryId) {
+        setSelectedCategoryId(initialCategories[0].id);
+      }
     }
   }, []);
 
-  // Effect to save data to localStorage when it changes
   useEffect(() => {
     localStorage.setItem('timeWiseLogs', JSON.stringify(timeLogs));
   }, [timeLogs]);
@@ -50,6 +60,25 @@ export default function HomePage() {
   useEffect(() => {
     localStorage.setItem('timeWiseCategories', JSON.stringify(categories));
   }, [categories]);
+
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | undefined;
+
+    if (isTimerRunning && !isPaused && timerStartTime !== null) {
+      const updateElapsedTime = () => {
+        setCurrentElapsedTime(Date.now() - timerStartTime - totalPausedDuration);
+      };
+      updateElapsedTime(); 
+      intervalId = setInterval(updateElapsedTime, 1000);
+    } else if (isTimerRunning && isPaused && timerStartTime !== null && pauseStartTime !== null) {
+      // When paused, currentElapsedTime should reflect the time up to the point of pause
+      setCurrentElapsedTime(pauseStartTime - timerStartTime - totalPausedDuration);
+    } else if (!isTimerRunning) {
+      setCurrentElapsedTime(0);
+    }
+
+    return () => clearInterval(intervalId);
+  }, [isTimerRunning, isPaused, timerStartTime, pauseStartTime, totalPausedDuration]);
 
 
   const handleAddCategory = (categoryName: string) => {
@@ -62,11 +91,11 @@ export default function HomePage() {
       return;
     }
     const newCategory: Category = {
-      id: `cat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // Simple unique ID
+      id: `cat-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       name: categoryName,
     };
     setCategories(prev => [...prev, newCategory]);
-    setSelectedCategoryId(newCategory.id); // Auto-select new category
+    setSelectedCategoryId(newCategory.id);
     toast({
       title: "Category Added",
       description: `Category "${categoryName}" has been added.`,
@@ -84,6 +113,10 @@ export default function HomePage() {
     }
     setTimerStartTime(Date.now());
     setIsTimerRunning(true);
+    setIsPaused(false);
+    setPauseStartTime(null);
+    setTotalPausedDuration(0);
+    setCurrentElapsedTime(0); 
     const selectedCategory = categories.find(c => c.id === selectedCategoryId);
     toast({
       title: "Timer Started",
@@ -91,23 +124,53 @@ export default function HomePage() {
     });
   };
 
+  const handlePauseTimer = () => {
+    if (!isTimerRunning || isPaused) return;
+    setIsPaused(true);
+    setPauseStartTime(Date.now());
+    const selectedCategory = categories.find(c => c.id === selectedCategoryId);
+    toast({
+      title: "Timer Paused",
+      description: `Timer for ${selectedCategory?.name || 'selected category'} is paused.`,
+      variant: "default",
+    });
+  };
+
+  const handleResumeTimer = () => {
+    if (!isTimerRunning || !isPaused || !pauseStartTime) return;
+    setTotalPausedDuration(prevDuration => prevDuration + (Date.now() - pauseStartTime));
+    setIsPaused(false);
+    setPauseStartTime(null);
+    const selectedCategory = categories.find(c => c.id === selectedCategoryId);
+    toast({
+      title: "Timer Resumed",
+      description: `Timer for ${selectedCategory?.name || 'selected category'} has resumed.`,
+    });
+  };
+
   const handleStopTimer = () => {
     if (!timerStartTime || !selectedCategoryId) return;
 
     const endTime = Date.now();
-    const duration = endTime - timerStartTime;
+    let finalTotalPausedDuration = totalPausedDuration;
+    if (isPaused && pauseStartTime) {
+      // If stopped while paused, add the current pause interval to total paused duration
+      finalTotalPausedDuration += (endTime - pauseStartTime);
+    }
+
+    const duration = (endTime - timerStartTime) - finalTotalPausedDuration;
     const selectedCategoryObject = categories.find(cat => cat.id === selectedCategoryId);
 
     if (!selectedCategoryObject) {
         toast({ title: "Error", description: "Selected category not found.", variant: "destructive"});
-        // Reset timer state to prevent inconsistent state
         setIsTimerRunning(false);
+        setIsPaused(false);
         setTimerStartTime(null);
-        // Optionally reset selectedCategoryId if it's invalid
-        // setSelectedCategoryId(null); 
+        setPauseStartTime(null);
+        setTotalPausedDuration(0);
+        setCurrentElapsedTime(0);
         return;
     }
-
 
     const newLog: TimeLog = {
       id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -117,9 +180,13 @@ export default function HomePage() {
       duration,
     };
 
-    setTimeLogs(prevLogs => [newLog, ...prevLogs]); // Add new log to the beginning
+    setTimeLogs(prevLogs => [newLog, ...prevLogs]);
     setIsTimerRunning(false);
-    setTimerStartTime(null); // Reset timer start time for the display
+    setIsPaused(false);
+    setTimerStartTime(null);
+    setPauseStartTime(null);
+    setTotalPausedDuration(0);
+    setCurrentElapsedTime(0); 
     
     toast({
       title: "Timer Stopped",
@@ -128,16 +195,19 @@ export default function HomePage() {
   };
   
   const currentSelectedCategoryName = categories.find(c => c.id === selectedCategoryId)?.name || "No category selected";
+  const cardDescription = isTimerRunning 
+    ? (isPaused ? `Timer PAUSED for: ${currentSelectedCategoryName}` : `Currently tracking: ${currentSelectedCategoryName}`) 
+    : "Select a category and start the timer.";
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col bg-background">
       <TimeWiseHeader />
       <main className="flex-grow container mx-auto p-4 md:p-6 lg:p-8 space-y-6">
-        <Card className="shadow-lg">
+        <Card className="shadow-lg rounded-xl">
           <CardHeader>
-            <CardTitle className="text-2xl">Track Your Time</CardTitle>
+            <CardTitle className="text-2xl font-bold">Track Your Time</CardTitle>
             <CardDescription>
-              {isTimerRunning ? `Currently tracking: ${currentSelectedCategoryName}` : "Select a category and start the timer."}
+              {cardDescription}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -149,18 +219,21 @@ export default function HomePage() {
               disabled={isTimerRunning}
             />
             <Separator />
-            <TimerDisplay startTime={timerStartTime} isRunning={isTimerRunning} />
+            <TimerDisplay elapsedTime={currentElapsedTime} />
             <TimerControls
               isRunning={isTimerRunning}
+              isPaused={isPaused}
               isCategorySelected={!!selectedCategoryId}
               onStart={handleStartTimer}
+              onPause={handlePauseTimer}
+              onResume={handleResumeTimer}
               onStop={handleStopTimer}
             />
           </CardContent>
         </Card>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="shadow-lg">
+          <Card className="shadow-lg rounded-xl">
             <CardHeader>
               <CardTitle>Activity Log</CardTitle>
               <CardDescription>Review your past work sessions.</CardDescription>
@@ -170,7 +243,7 @@ export default function HomePage() {
             </CardContent>
           </Card>
 
-          <Card className="shadow-lg">
+          <Card className="shadow-lg rounded-xl">
             <CardHeader>
               <CardTitle>Work Summary</CardTitle>
               <CardDescription>Visual breakdown of your time.</CardDescription>
