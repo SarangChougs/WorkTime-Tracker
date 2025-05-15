@@ -28,8 +28,8 @@ export default function HomePage() {
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [pauseStartTime, setPauseStartTime] = useState<number | null>(null);
-  const [totalPausedDuration, setTotalPausedDuration] = useState(0);
-  const [currentElapsedTime, setCurrentElapsedTime] = useState(0);
+  const [totalPausedDuration, setTotalPausedDuration] = useState(0); // Stores accumulated pause time for the CURRENT session
+  const [currentElapsedTime, setCurrentElapsedTime] = useState(0); // Stores active elapsed time for display
 
   const { toast } = useToast();
 
@@ -37,7 +37,9 @@ export default function HomePage() {
     const storedLogs = localStorage.getItem('timeWiseLogs');
     const storedCategories = localStorage.getItem('timeWiseCategories');
     if (storedLogs) {
-      setTimeLogs(JSON.parse(storedLogs));
+      // Ensure logs are parsed with the potentially new totalPausedDuration field
+      const parsedLogs: TimeLog[] = JSON.parse(storedLogs);
+      setTimeLogs(parsedLogs);
     }
     if (storedCategories) {
       const parsedCategories = JSON.parse(storedCategories);
@@ -66,6 +68,7 @@ export default function HomePage() {
 
     if (isTimerRunning && !isPaused && timerStartTime !== null) {
       const updateElapsedTime = () => {
+        // Current active elapsed time = Now - Start Time - Total Paused Duration
         setCurrentElapsedTime(Date.now() - timerStartTime - totalPausedDuration);
       };
       updateElapsedTime(); 
@@ -74,6 +77,7 @@ export default function HomePage() {
       // When paused, currentElapsedTime should reflect the time up to the point of pause
       setCurrentElapsedTime(pauseStartTime - timerStartTime - totalPausedDuration);
     } else if (!isTimerRunning) {
+      // Reset displayed elapsed time when timer is not running
       setCurrentElapsedTime(0);
     }
 
@@ -95,7 +99,7 @@ export default function HomePage() {
       name: categoryName,
     };
     setCategories(prev => [...prev, newCategory]);
-    setSelectedCategoryId(newCategory.id);
+    setSelectedCategoryId(newCategory.id); // Automatically select new category
     toast({
       title: "Category Added",
       description: `Category "${categoryName}" has been added.`,
@@ -115,8 +119,8 @@ export default function HomePage() {
     setIsTimerRunning(true);
     setIsPaused(false);
     setPauseStartTime(null);
-    setTotalPausedDuration(0);
-    setCurrentElapsedTime(0); 
+    setTotalPausedDuration(0); // Reset total paused duration for new session
+    setCurrentElapsedTime(0); // Reset elapsed time display
     const selectedCategory = categories.find(c => c.id === selectedCategoryId);
     toast({
       title: "Timer Started",
@@ -127,7 +131,8 @@ export default function HomePage() {
   const handlePauseTimer = () => {
     if (!isTimerRunning || isPaused) return;
     setIsPaused(true);
-    setPauseStartTime(Date.now());
+    setPauseStartTime(Date.now()); // Record the time pause started
+    // currentElapsedTime will be updated by useEffect based on pauseStartTime
     const selectedCategory = categories.find(c => c.id === selectedCategoryId);
     toast({
       title: "Timer Paused",
@@ -138,9 +143,11 @@ export default function HomePage() {
 
   const handleResumeTimer = () => {
     if (!isTimerRunning || !isPaused || !pauseStartTime) return;
+    // Add the duration of the just-ended pause to the total
     setTotalPausedDuration(prevDuration => prevDuration + (Date.now() - pauseStartTime));
     setIsPaused(false);
-    setPauseStartTime(null);
+    setPauseStartTime(null); // Clear pause start time
+    // currentElapsedTime will be updated by useEffect
     const selectedCategory = categories.find(c => c.id === selectedCategoryId);
     toast({
       title: "Timer Resumed",
@@ -152,17 +159,21 @@ export default function HomePage() {
     if (!timerStartTime || !selectedCategoryId) return;
 
     const endTime = Date.now();
-    let finalTotalPausedDuration = totalPausedDuration;
+    let finalTotalPausedDurationThisSession = totalPausedDuration;
+
+    // If timer is stopped while paused, add the current pause interval to this session's total paused duration
     if (isPaused && pauseStartTime) {
-      // If stopped while paused, add the current pause interval to total paused duration
-      finalTotalPausedDuration += (endTime - pauseStartTime);
+      finalTotalPausedDurationThisSession += (endTime - pauseStartTime);
     }
 
-    const duration = (endTime - timerStartTime) - finalTotalPausedDuration;
+    // Active duration = (End Time - Start Time) - Total Time Paused During This Session
+    const activeDuration = (endTime - timerStartTime) - finalTotalPausedDurationThisSession;
+    
     const selectedCategoryObject = categories.find(cat => cat.id === selectedCategoryId);
 
     if (!selectedCategoryObject) {
         toast({ title: "Error", description: "Selected category not found.", variant: "destructive"});
+        // Reset timer state even if category is somehow not found
         setIsTimerRunning(false);
         setIsPaused(false);
         setTimerStartTime(null);
@@ -177,20 +188,23 @@ export default function HomePage() {
       category: selectedCategoryObject.name,
       startTime: timerStartTime,
       endTime,
-      duration,
+      duration: activeDuration, // Log the active duration
+      totalPausedDuration: finalTotalPausedDurationThisSession, // Log the total paused duration for this entry
     };
 
     setTimeLogs(prevLogs => [newLog, ...prevLogs]);
+
+    // Reset all timer states
     setIsTimerRunning(false);
     setIsPaused(false);
     setTimerStartTime(null);
     setPauseStartTime(null);
     setTotalPausedDuration(0);
-    setCurrentElapsedTime(0); 
+    setCurrentElapsedTime(0); // Reset displayed elapsed time
     
     toast({
       title: "Timer Stopped",
-      description: `Logged ${newLog.category} for ${ (duration / (1000 * 60)).toFixed(1) } minutes.`,
+      description: `Logged ${newLog.category} for ${ (activeDuration / (1000 * 60)).toFixed(1) } minutes.`,
     });
   };
   
